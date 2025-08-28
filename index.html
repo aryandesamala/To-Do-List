@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do List</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        window.initializeApp = initializeApp;
+        window.getAuth = getAuth;
+        window.signInAnonymously = signInAnonymously;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.getFirestore = getFirestore;
+        window.doc = doc;
+        window.addDoc = addDoc;
+        window.updateDoc = updateDoc;
+        window.deleteDoc = deleteDoc;
+        window.onSnapshot = onSnapshot;
+        window.collection = collection;
+        window.query = query;
+    </script>
+</head>
+<body class="bg-slate-900 text-gray-100 font-sans p-4 antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyBEwy-ccn9spebmx_yutXtJGPB8vt3URqM",
+          authDomain: "to-do-list-5c042.firebaseapp.com",
+          projectId: "to-do-list-5c042",
+          storageBucket: "to-do-list-5c042.firebasestorage.app",
+          messagingSenderId: "235299000828",
+          appId: "1:235299000828:web:b71aee9fadff38c057e279",
+          measurementId: "G-BJ15713DGV"
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const ErrorMessage = ({ message, onClose }) => {
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-red-800 text-white rounded-xl shadow-lg p-6 w-full max-w-sm flex flex-col items-center gap-4 border border-red-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-red-300">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0zm-9 3.75h.008v.008H12v-.008z" />
+                        </svg>
+                        <p className="text-center font-semibold text-lg">{message}</p>
+                        <button 
+                            onClick={onClose} 
+                            className="bg-red-600 text-white px-6 py-2 rounded-full font-bold hover:bg-red-700 transition-colors"
+                        >
+                            Close
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+        
+        const App = () => {
+            const [tasks, setTasks] = useState([]);
+            const [taskInput, setTaskInput] = useState('');
+            const [errorMessage, setErrorMessage] = useState('');
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [userId, setUserId] = useState(null);
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            
+            useEffect(() => {
+                const initFirebase = async () => {
+                    if (Object.keys(firebaseConfig).length === 0) {
+                        setErrorMessage('Firebase config not found. The app cannot run without it.');
+                        return;
+                    }
+                    try {
+                        const app = window.initializeApp(firebaseConfig);
+                        const auth = window.getAuth(app);
+                        const db = window.getFirestore(app);
+                        
+                        setAuth(auth);
+                        setDb(db);
+                        
+                        window.onAuthStateChanged(auth, async (user) => {
+                            if (user) {
+                                setUserId(user.uid);
+                            } else {
+                                try {
+                                    if (typeof __initial_auth_token !== 'undefined') {
+                                        await window.signInWithCustomToken(auth, __initial_auth_token);
+                                    } else {
+                                        await window.signInAnonymously(auth);
+                                    }
+                                } catch (error) {
+                                    console.error('Authentication error:', error);
+                                    setErrorMessage('Authentication failed. Please check your token.');
+                                }
+                            }
+                            setIsAuthReady(true);
+                        });
+
+                    } catch (error) {
+                        console.error("Firebase initialization failed:", error);
+                        setErrorMessage('Failed to initialize Firebase. Please check the configuration.');
+                    }
+                };
+                initFirebase();
+            }, []);
+
+            useEffect(() => {
+                if (isAuthReady && db && userId) {
+                    const tasksColRef = window.collection(db, `/artifacts/${appId}/users/${userId}/tasks`);
+                    const q = window.query(tasksColRef);
+                    const unsubscribe = window.onSnapshot(q, (snapshot) => {
+                        const tasksData = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data()
+                        }));
+                        setTasks(tasksData);
+                    }, (error) => {
+                        console.error("Failed to fetch tasks:", error);
+                        setErrorMessage('Failed to load tasks. Please try again.');
+                    });
+                    return () => unsubscribe();
+                }
+            }, [isAuthReady, db, userId]);
+
+            const addTask = async (e) => {
+                e.preventDefault();
+                if (!taskInput.trim()) return;
+                if (!isAuthReady || !db || !userId) {
+                    setErrorMessage('Application is not ready. Please wait.');
+                    return;
+                }
+                try {
+                    await window.addDoc(window.collection(db, `/artifacts/${appId}/users/${userId}/tasks`), {
+                        description: taskInput,
+                        completed: false,
+                        createdAt: new Date(),
+                    });
+                    setTaskInput('');
+                } catch (error) {
+                    console.error("Failed to add task:", error);
+                    setErrorMessage('Failed to add task. Please check your connection.');
+                }
+            };
+
+            const toggleTaskCompletion = async (taskId, completed) => {
+                if (!isAuthReady || !db || !userId) return;
+                try {
+                    const taskRef = window.doc(db, `/artifacts/${appId}/users/${userId}/tasks/${taskId}`);
+                    await window.updateDoc(taskRef, { completed: !completed });
+                } catch (error) {
+                    console.error("Failed to update task:", error);
+                    setErrorMessage('Failed to update task. Please try again.');
+                }
+            };
+            
+            const updateTaskDescription = async (taskId, newDescription) => {
+                if (!newDescription.trim()) return;
+                if (!isAuthReady || !db || !userId) return;
+                try {
+                    const taskRef = window.doc(db, `/artifacts/${appId}/users/${userId}/tasks/${taskId}`);
+                    await window.updateDoc(taskRef, { description: newDescription });
+                } catch (error) {
+                    console.error("Failed to update task description:", error);
+                    setErrorMessage('Failed to update task description. Please try again.');
+                }
+            };
+
+            const deleteTask = async (taskId) => {
+                if (!isAuthReady || !db || !userId) return;
+                try {
+                    const taskRef = window.doc(db, `/artifacts/${appId}/users/${userId}/tasks/${taskId}`);
+                    await window.deleteDoc(taskRef);
+                } catch (error) {
+                    console.error("Failed to delete task:", error);
+                    setErrorMessage('Failed to delete task. Please try again.');
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-900 text-gray-100 flex items-start justify-center p-4">
+                    {errorMessage && <ErrorMessage message={errorMessage} onClose={() => setErrorMessage('')} />}
+                    <div className="bg-gray-800 p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-xl transition-all duration-300">
+                        <div className="flex justify-between items-center mb-6">
+                            <h1 className="text-3xl sm:text-4xl font-extrabold text-cyan-300">To-Do List</h1>
+                            {userId && <p className="text-xs sm:text-sm text-gray-400">User ID: {userId}</p>}
+                        </div>
+                        <form onSubmit={addTask} className="flex flex-col sm:flex-row gap-4 mb-8">
+                            <input 
+                                type="text"
+                                value={taskInput}
+                                onChange={(e) => setTaskInput(e.target.value)}
+                                placeholder="Add a new task..."
+                                className="flex-1 p-4 rounded-xl bg-gray-700 text-gray-100 placeholder-gray-400 border border-gray-600 focus:outline-none focus:border-cyan-500 transition-colors"
+                            />
+                            <button 
+                                type="submit" 
+                                className="px-6 py-4 bg-cyan-600 text-white font-bold rounded-xl hover:bg-cyan-700 transition-colors shadow-lg"
+                            >
+                                Add Task
+                            </button>
+                        </form>
+                        <ul className="space-y-4">
+                            {tasks.length > 0 ? (
+                                tasks.map((task) => (
+                                    <TaskItem 
+                                        key={task.id} 
+                                        task={task} 
+                                        toggleTaskCompletion={toggleTaskCompletion} 
+                                        deleteTask={deleteTask} 
+                                        updateTaskDescription={updateTaskDescription}
+                                    />
+                                ))
+                            ) : (
+                                <li className="text-center text-gray-400 py-8">
+                                    No tasks found. Add a new one above!
+                                </li>
+                            )}
+                        </ul>
+                    </div>
+                </div>
+            );
+        };
+
+        const TaskItem = ({ task, toggleTaskCompletion, deleteTask, updateTaskDescription }) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [editedText, setEditedText] = useState(task.description);
+            const inputRef = React.useRef(null);
+            
+            const handleUpdate = () => {
+                updateTaskDescription(task.id, editedText);
+                setIsEditing(false);
+            };
+
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter') {
+                    handleUpdate();
+                } else if (e.key === 'Escape') {
+                    setEditedText(task.description);
+                    setIsEditing(false);
+                }
+            };
+            
+            useEffect(() => {
+                if (isEditing && inputRef.current) {
+                    inputRef.current.focus();
+                }
+            }, [isEditing]);
+            
+            return (
+                <li className="flex items-center justify-between p-4 bg-gray-700 rounded-xl shadow-md transition-transform transform hover:scale-[1.01] duration-200">
+                    <div className="flex items-center flex-grow min-w-0">
+                        <input 
+                            type="checkbox" 
+                            checked={task.completed} 
+                            onChange={() => toggleTaskCompletion(task.id, task.completed)}
+                            className="form-checkbox h-5 w-5 text-cyan-500 rounded-full border-gray-500 bg-gray-600 transition-colors duration-200 cursor-pointer"
+                        />
+                        {isEditing ? (
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={editedText}
+                                onChange={(e) => setEditedText(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                className="ml-4 flex-1 p-2 rounded bg-gray-600 text-gray-100 border border-gray-500 focus:outline-none focus:border-cyan-500"
+                            />
+                        ) : (
+                            <span className={`ml-4 text-lg break-words flex-1 min-w-0 ${task.completed ? 'line-through text-gray-400' : 'text-gray-100'}`}>
+                                {task.description}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                        {isEditing ? (
+                            <div>
+                                <button
+                                    onClick={handleUpdate}
+                                    className="p-2 text-green-400 hover:text-green-500 transition-colors duration-200"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setIsEditing(false)}
+                                    className="p-2 text-gray-400 hover:text-gray-500 transition-colors duration-200"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        ) : (
+                            <button
+                                onClick={() => setIsEditing(true)}
+                                className="p-2 text-blue-400 hover:text-blue-500 transition-colors duration-200"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.652.663c-.89.223-1.802-.355-2.025-1.245l-.663-2.652a4.5 4.5 0 011.13-1.897L16.862 4.487z" />
+                                </svg>
+                            </button>
+                        )}
+                        <button 
+                            onClick={() => deleteTask(task.id)}
+                            className="p-2 text-red-400 hover:text-red-500 transition-colors duration-200"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.942a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.678-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.14-2.03-2.243A9.96 9.96 0 0012 2.25c-5.111 0-8.995 2.572-10.957 6.452m10.957 0h.008v.008H12v-.008z" />
+                            </svg>
+                        </button>
+                    </div>
+                </li>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
